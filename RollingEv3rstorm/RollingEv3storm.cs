@@ -320,32 +320,8 @@ namespace SmallRobots.RollingEv3rstorm
 
         void HeadBeaconTrackingTask(RollingEv3rstorm robot)
         {
-            //const sbyte power = 30;
-            //const byte numberOfSamples = 5;
-
-            //double averageDirection = 0;
-            //for (int i = 0; i < numberOfSamples; i++)
-            //{
-            //    averageDirection = +robot.irSensor.ReadBeaconLocation().Location;
-            //}
-            //averageDirection = averageDirection / numberOfSamples;
-
-            //int tachoCount = robot.headMotor.GetTachoCount();
-            //if (Math.Abs(averageDirection) > 3)
-            //{
-            //    if ((averageDirection > 0) && (tachoCount < 90))
-            //    {
-            //        headMotor.SetPower(power);
-            //    }
-            //    if ((averageDirection < 0) && (tachoCount > -90))
-            //    {
-            //        headMotor.SetPower(-power);
-            //    }
-            //}
-            //else
-            //{
-            //    headMotor.SetSpeed(0);
-            //}
+            // Local variables
+            BeaconLocation bl = null;
 
             if (!stopWatch.IsRunning)
             {
@@ -357,14 +333,16 @@ namespace SmallRobots.RollingEv3rstorm
             {
                 lastExecutionTime = stopWatch.ElapsedMilliseconds;
                 double avgPv = 0;
-                int numberOfSamples = 10;
+                int numberOfSamples = 10;                
                 for (int i = 0; i < numberOfSamples; i++)
                 {
-                    // LcdConsole.WriteLine("Sample " + i.ToString("F2"));
-                    avgPv = avgPv + robot.irSensor.ReadBeaconLocation().Location;
+                    bl = robot.irSensor.ReadBeaconLocation();
+                    if (bl.Distance != 0)
+                    {
+                        // Update the moving average with the detected beacon location
+                        avgPv = avgPv + bl.Location;
+                    }
                 }
-                SetPoint = robot.headMotor.GetTachoCount() + 2 * avgPv / numberOfSamples;
-                // LcdConsole.WriteLine("ProcessVariableSignal " + ProcessVariableSignal.ToString("F2"));
             }
 
             ProcessVariableSignal = robot.headMotor.GetTachoCount();
@@ -379,34 +357,79 @@ namespace SmallRobots.RollingEv3rstorm
             // Filtering the process Variable
             ps.FilteredProcessVariable = ps.FilteredProcessVariableK1 + LowPassConstant * (ProcessVariableSignal - ps.FilteredProcessVariable);
 
-            // updating error
-            ps.Error = SetPoint - ps.FilteredProcessVariable;
+            ////////////////////
+            // Steer and fire //
+            ////////////////////
+            // Update the sensor reading
+            bl = robot.irSensor.ReadBeaconLocation();
 
-            // Updating robot steering
-            steering =  (int) ps.FilteredProcessVariable;
-            if ((Math.Abs(ps.Error) < 10) && (robot.irSensor.ReadBeaconLocation().Distance > 20))
+            if (bl.Distance != 0)
             {
-                speed = 40;   
+                // Updating robot steering
+                steering = (int)ps.FilteredProcessVariable;
+                if ((Math.Abs(ps.Error) < 10) && (robot.irSensor.ReadBeaconLocation().Distance > 20))
+                {
+                    speed = 40;
+                }
+                else
+                {
+                    speed = 0;
+                }
+
+                // Fire if close enough
+                if ((Math.Abs(ps.Error) < 10) && (robot.irSensor.ReadBeaconLocation().Distance <= 20)
+                    && (robot.irSensor.ReadBeaconLocation().Distance > 0))
+                {
+                    gunMotor.SetPower(100);
+                }
+                else
+                {
+                    gunMotor.SetPower(0);
+                }
             }
             else
             {
-                speed = 0;
-            }
+                // Check for Remote
+                byte remoteCommand = robot.irSensor.ReadRemoteCommand();
+                switch (remoteCommand)
+                {
+                    case 0: // No key pressed
+                        speed = 0;
+                        steering = 0;
+                        break;
+                    case 3: // Up right
+                        speed = 30;
+                        steering = 15;
+                        break;
+                    case 1: // Up left
+                        speed = 30;
+                        steering = -15;
+                        break;
+                    case 4: // Down right
+                        speed = -30;
+                        steering = -15;
+                        break;
+                    case 2: // Down left
+                        speed = -30;
+                        steering = 15;
+                        break;
+                    case 5: // Down left up right
+                        speed = 40;
+                        steering = 0;
+                        break;
+                    case 8: // Down left down right
+                        speed = -40;
+                        steering = 0;
+                        break;
+                }
 
-            // Fire if close enough
-
-            if ((Math.Abs(ps.Error) < 10) && (robot.irSensor.ReadBeaconLocation().Distance <= 20)
-                && (robot.irSensor.ReadBeaconLocation().Distance > 0))
-            {
-                gunMotor.SetPower(100);
             }
-            else
-            {
-                gunMotor.SetPower(0);
-            }
+            ////////////////////////
+            // End steer and fire //
+            ////////////////////////
 
-                // computating delta_u and u
-                ps.DeltaControlSignal = k1 * ps.Error + k2 * ps.ErrorK1 + k3 * ps.ErrorK2;
+            // computating delta_u and u
+            ps.DeltaControlSignal = k1 * ps.Error + k2 * ps.ErrorK1 + k3 * ps.ErrorK2;
             ps.ControlSignal = ps.ControlSignal + ps.DeltaControlSignal;
 
             // Saturatin u
